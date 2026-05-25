@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { Shield, ShieldAlert, CheckCircle, AlertTriangle, FileCode, UploadCloud, Link, ArrowLeft, Download, Terminal, Settings, Globe, Play, FileText, ChevronRight, AlertOctagon, HelpCircle, Mail } from "lucide-react";
 import { jsPDF } from "jspdf";
 import { ScanRecord, ThreatLevel } from "../types.js";
@@ -19,9 +19,10 @@ interface AnalyzerProps {
   }) => Promise<ScanRecord>;
   selectedRecord: ScanRecord | null;
   onClearSelection: () => void;
+  pastRecords?: ScanRecord[];
 }
 
-export function Analyzer({ onAnalyze, selectedRecord, onClearSelection }: AnalyzerProps) {
+export function Analyzer({ onAnalyze, selectedRecord, onClearSelection, pastRecords = [] }: AnalyzerProps) {
   // Input states
   const [subject, setSubject] = useState("");
   const [sender, setSender] = useState("");
@@ -36,6 +37,69 @@ export function Analyzer({ onAnalyze, selectedRecord, onClearSelection }: Analyz
   const [error, setError] = useState<string | null>(null);
   const [analystTab, setAnalystTab] = useState<"ai" | "ml" | "headers" | "payloads">("ai");
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+
+  // Track completed remediation tasks keyed by `${recordId}-${stepIndex}`
+  const [completedRemediations, setCompletedRemediations] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem("soc_completed_remediations");
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const toggleRemediation = (recordId: string, idx: number) => {
+    const key = `${recordId}-${idx}`;
+    setCompletedRemediations((prev) => {
+      const updated = { ...prev, [key]: !prev[key] };
+      try {
+        localStorage.setItem("soc_completed_remediations", JSON.stringify(updated));
+      } catch (e) {
+        console.error("Failed saving checklist state", e);
+      }
+      return updated;
+    });
+  };
+
+  // Helper utility to extract domain from email
+  const getDomain = (email: string) => {
+    if (!email) return "";
+    const parts = email.split("@");
+    let rawDomain = parts.length > 1 ? parts[1] : parts[0];
+    // Strip out any surrounding brackets, spaces, quotes, or tags
+    rawDomain = rawDomain.replace(/[<>'"[\]\s]/g, "");
+    return rawDomain.toLowerCase().trim();
+  };
+
+  // Memoized reputation check comparing current sender domain against past threat data
+  const domainAlertData = useMemo(() => {
+    if (!selectedRecord?.sender) return null;
+    const currentDomain = getDomain(selectedRecord.sender);
+    if (!currentDomain) return null;
+
+    // Filter past scans to matching domain, omitting the active selected record itself
+    const matchingPhishScans = pastRecords.filter(
+      (rec) => 
+        rec.id !== selectedRecord.id && 
+        getDomain(rec.sender) === currentDomain &&
+        rec.prediction === "Phishing"
+    );
+
+    const matchingLegitScans = pastRecords.filter(
+      (rec) => 
+        rec.id !== selectedRecord.id && 
+        getDomain(rec.sender) === currentDomain &&
+        rec.prediction === "Legitimate"
+    );
+
+    const frequencyCount = matchingPhishScans.length;
+    return {
+      domain: currentDomain,
+      frequencyCount,
+      totalCount: frequencyCount + matchingLegitScans.length,
+      phishScans: matchingPhishScans
+    };
+  }, [selectedRecord, pastRecords]);
 
   // Loading logs sequence simulated for realistic SOC experience
   const LOADING_STEPS = [
@@ -292,6 +356,55 @@ export function Analyzer({ onAnalyze, selectedRecord, onClearSelection }: Analyz
             </div>
           </div>
 
+          {/* Domain Frequency Reputation Warning */}
+          {domainAlertData && (
+            domainAlertData.frequencyCount > 0 ? (
+              <div className="bg-rose-950/20 border border-rose-500/30 rounded-2xl p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-[0_0_20px_rgba(244,63,94,0.05)]">
+                <div className="flex gap-4">
+                  <div className="p-3 bg-rose-500/10 text-rose-450 rounded-xl border border-rose-500/20 shrink-0 mt-0.5">
+                    <AlertOctagon className="w-5.5 h-5.5 text-rose-500 animate-pulse" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <h4 className="text-sm font-bold text-rose-400 font-mono flex items-center gap-2 uppercase tracking-wider">
+                      [DOMAIN_REPUTATION_ALERT]: PRIOR INCIDENTS DETECTED
+                    </h4>
+                    <p className="text-xs text-slate-300 leading-relaxed max-w-2xl font-mono">
+                      The sender domain <strong className="text-white px-1.5 py-0.5 bg-slate-950 rounded border border-slate-800 font-mono select-all">@{domainAlertData.domain}</strong> has been flagged in <strong className="text-rose-400 font-bold px-1">{domainAlertData.frequencyCount}</strong> prior phishing investigation campaigns stored in the local registry. This matches signatures of active multi-stage phishing campaigns.
+                    </p>
+                    <div className="flex flex-wrap gap-2 pt-1 font-mono">
+                      <span className="text-[10px] text-slate-500 uppercase tracking-widest self-center font-bold">Known Correlation Refs:</span>
+                      {domainAlertData.phishScans.map((ref) => (
+                        <span key={ref.id} className="text-[9px] px-2 py-0.5 bg-rose-500/10 border border-rose-500/25 text-rose-400 rounded-md">
+                          {ref.incidentId}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div className="text-right font-mono min-w-[130px] shrink-0 self-stretch md:self-auto flex md:flex-col justify-between items-center bg-slate-950/40 p-4 rounded-xl border border-slate-900 border-dashed">
+                  <span className="text-[9px] text-slate-500 uppercase tracking-wider font-bold">Campaign Weight</span>
+                  <span className="text-rose-450 font-bold text-lg tracking-tight mt-1">
+                    {domainAlertData.totalCount > 0 
+                      ? `${Math.round((domainAlertData.frequencyCount / domainAlertData.totalCount) * 100)}% Phish` 
+                      : "100% Phish"}
+                  </span>
+                </div>
+              </div>
+            ) : domainAlertData.totalCount > 0 ? (
+              <div className="bg-emerald-950/20 border border-emerald-500/30 rounded-2xl p-4 flex gap-3.5 items-center shadow-[0_0_20px_rgba(16,185,129,0.05)]">
+                <div className="p-2 bg-emerald-500/10 text-emerald-450 rounded-xl border border-emerald-500/20 shrink-0">
+                  <CheckCircle className="w-5 h-5 text-emerald-500 font-bold" />
+                </div>
+                <div className="text-xs font-mono space-y-0.5">
+                  <h4 className="font-bold text-emerald-400 tracking-wider">[DOMAIN_REPUTATION]: ZERO DETECT POINTS</h4>
+                  <p className="text-slate-300">
+                    The domain <strong className="text-slate-200">@{domainAlertData.domain}</strong> has appeared in <strong className="text-emerald-450">{domainAlertData.totalCount}</strong> stable security audits with 0 malicious classifications.
+                  </p>
+                </div>
+              </div>
+            ) : null
+          )}
+
           {/* Core Navigation Sub Tabs */}
           <div className="flex border-b border-slate-800 text-xs font-mono overflow-x-auto gap-3 pb-px">
             <button
@@ -359,18 +472,65 @@ export function Analyzer({ onAnalyze, selectedRecord, onClearSelection }: Analyz
 
                 {/* Mitigation Steps checklist */}
                 <div className="bg-slate-900/40 border border-slate-800 p-6 rounded-2xl space-y-4">
-                  <h4 className="text-sm font-bold text-slate-200 uppercase font-mono tracking-wide">Endpoint Mitigation Checklists</h4>
-                  <div className="space-y-3.5">
-                    {selectedRecord.aiForensicAnalysis?.remediationSteps.map((step, idx) => (
-                      <div key={idx} className="flex items-start gap-3">
-                        <input
-                          type="checkbox"
-                          className="mt-0.5 w-4 h-4 rounded border-slate-800 bg-slate-950 accent-cyan-500 text-cyan-500 focus:ring-0 focus:outline-none"
-                          defaultChecked={false}
-                        />
-                        <span className="text-xs font-mono text-slate-350 leading-relaxed">{step}</span>
-                      </div>
-                    ))}
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-800/60 pb-3">
+                    <div>
+                      <h4 className="text-sm font-bold text-slate-200 uppercase font-mono tracking-wide">Endpoint Mitigation Checklists</h4>
+                      <p className="text-[10px] text-slate-400 font-mono mt-0.5">Track and sign off remediation playbooks for Incident #{selectedRecord.id.substring(0, 8)}</p>
+                    </div>
+                    {selectedRecord.aiForensicAnalysis?.remediationSteps && selectedRecord.aiForensicAnalysis.remediationSteps.length > 0 && (
+                      <span className="text-xs font-mono px-2.5 py-1 bg-cyan-500/10 border border-cyan-500/25 rounded-md text-cyan-400 font-semibold self-start sm:self-center">
+                        {(() => {
+                          const stepsList = selectedRecord.aiForensicAnalysis.remediationSteps;
+                          const done = stepsList.filter((_, i) => !!completedRemediations[`${selectedRecord.id}-${i}`]).length;
+                          return `${done}/${stepsList.length} Tasks Checked (${Math.round((done / stepsList.length) * 100)}%)`;
+                        })()}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Progressive indicator bar */}
+                  {selectedRecord.aiForensicAnalysis?.remediationSteps && selectedRecord.aiForensicAnalysis.remediationSteps.length > 0 && (
+                    <div className="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden border border-slate-800/40">
+                      {(() => {
+                        const stepsList = selectedRecord.aiForensicAnalysis.remediationSteps;
+                        const done = stepsList.filter((_, i) => !!completedRemediations[`${selectedRecord.id}-${i}`]).length;
+                        const percent = Math.round((done / stepsList.length) * 100);
+                        return (
+                          <div 
+                            className="bg-gradient-to-r from-cyan-500 to-emerald-500 h-1.5 rounded-full transition-all duration-350" 
+                            style={{ width: `${percent}%` }}
+                          />
+                        );
+                      })()}
+                    </div>
+                  )}
+
+                  <div className="space-y-2.5">
+                    {selectedRecord.aiForensicAnalysis?.remediationSteps.map((step, idx) => {
+                      const isChecked = !!completedRemediations[`${selectedRecord.id}-${idx}`];
+                      return (
+                        <label 
+                          key={idx} 
+                          className={`flex items-start gap-3 p-3 rounded-xl border transition-all cursor-pointer select-none group ${
+                            isChecked 
+                              ? "bg-emerald-500/5 border-emerald-500/20 text-slate-400" 
+                              : "bg-slate-950/20 border-slate-800/40 hover:border-slate-700 text-slate-300"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            className="mt-0.5 w-4 h-4 rounded border-slate-800 bg-slate-950 checked:bg-emerald-500 checked:border-emerald-500 accent-emerald-500 text-emerald-500 focus:ring-0 focus:outline-none cursor-pointer"
+                            checked={isChecked}
+                            onChange={() => toggleRemediation(selectedRecord.id, idx)}
+                          />
+                          <span className={`text-xs font-mono leading-relaxed transition-all ${
+                            isChecked ? "line-through text-slate-500" : "group-hover:text-slate-100"
+                          }`}>
+                            {step}
+                          </span>
+                        </label>
+                      );
+                    })}
                   </div>
                 </div>
               </div>

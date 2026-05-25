@@ -344,6 +344,7 @@ export default function App() {
                 onAnalyze={handleAnalyzeThreat}
                 selectedRecord={selectedRecord}
                 onClearSelection={() => setSelectedRecord(null)}
+                pastRecords={stats?.recentInvestigations || []}
               />
             )}
 

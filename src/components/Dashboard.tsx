@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Shield, ShieldAlert, CheckCircle, Search, AlertOctagon, Terminal, Trash2, ChevronRight, FileText, BarChart2, Bell, Activity, Mail, Eye } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, LineChart, Line, CartesianGrid } from "recharts";
+import { motion, AnimatePresence } from "motion/react";
 import { DashboardStats, ScanRecord, ThreatLevel, UserRole } from "../types.js";
 import { EmailPreviewModal } from "./EmailPreviewModal.js";
 
@@ -22,6 +23,30 @@ export function Dashboard({ stats, loading, onViewRecord, onDeleteRecord, curren
   const [filterType, setFilterType] = useState<"ALL" | "Phishing" | "Legitimate">("ALL");
   const [selectedPreviewRecord, setSelectedPreviewRecord] = useState<ScanRecord | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [hoveredRecord, setHoveredRecord] = useState<ScanRecord | null>(null);
+  const [hoveredPosition, setHoveredPosition] = useState({ x: 0, y: 0 });
+
+  const handleRowMouseMove = (e: React.MouseEvent, scan: ScanRecord) => {
+    if (typeof window === "undefined") return;
+    const windowWidth = window.innerWidth;
+    const windowHeight = window.innerHeight;
+
+    const tooltipWidth = 340;
+    const tooltipHeight = 220;
+    
+    let x = e.clientX + 15;
+    let y = e.clientY + 15;
+
+    if (x + tooltipWidth > windowWidth) {
+      x = e.clientX - tooltipWidth - 15;
+    }
+    if (y + tooltipHeight > windowHeight) {
+      y = e.clientY - tooltipHeight - 15;
+    }
+
+    setHoveredRecord(scan);
+    setHoveredPosition({ x, y });
+  };
 
   // Track notifications that have been processed/shown to avoid duplicate alerts on stats changes
   const [notifiedIds, setNotifiedIds] = useState<Set<string>>(() => {
@@ -501,7 +526,13 @@ export function Dashboard({ stats, loading, onViewRecord, onDeleteRecord, curren
                   });
 
                   return (
-                    <tr key={scan.id} className="hover:bg-slate-900/30 transition-colors group">
+                    <tr
+                      key={scan.id}
+                      onMouseEnter={() => setHoveredRecord(scan)}
+                      onMouseMove={(e) => handleRowMouseMove(e, scan)}
+                      onMouseLeave={() => setHoveredRecord(null)}
+                      className="hover:bg-slate-900/40 transition-colors group cursor-pointer"
+                    >
                       <td className="py-4 px-6">
                         <span className="block text-slate-200 font-bold font-sans tracking-wide">{scan.incidentId}</span>
                         <span className="text-[10px] text-slate-500">{dateStr}</span>
@@ -658,6 +689,117 @@ export function Dashboard({ stats, loading, onViewRecord, onDeleteRecord, curren
           </div>
         ))}
       </div>
+
+      <AnimatePresence>
+        {hoveredRecord && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 10 }}
+            transition={{ duration: 0.12, ease: "easeOut" }}
+            className="fixed z-50 pointer-events-none w-[340px] bg-slate-950/95 backdrop-blur-md border border-slate-800/80 rounded-2xl p-4 shadow-[0_20px_40px_rgba(0,0,0,0.95),0_0_25px_rgba(6,182,212,0.15)] flex flex-col space-y-3 font-mono text-[10px]"
+            style={{
+              left: hoveredPosition.x,
+              top: hoveredPosition.y,
+            }}
+          >
+            {/* Tooltip Header */}
+            <div className="flex items-center justify-between border-b border-slate-800/60 pb-2">
+              <div className="flex items-center gap-2">
+                {hoveredRecord.prediction === "Phishing" ? (
+                  <ShieldAlert className="w-4 h-4 text-rose-500 animate-pulse" />
+                ) : (
+                  <CheckCircle className="w-4 h-4 text-cyan-400" />
+                )}
+                <div className="flex flex-col">
+                  <span className="text-[8px] font-bold text-slate-500 uppercase tracking-widest leading-none">FORENSIC BRIEF</span>
+                  <span className="text-slate-200 font-bold block text-xs mt-0.5">{hoveredRecord.incidentId}</span>
+                </div>
+              </div>
+              <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${
+                hoveredRecord.prediction === "Phishing" 
+                  ? "bg-rose-500/10 text-rose-400 border border-rose-500/20" 
+                  : "bg-cyan-500/10 text-cyan-400 border border-cyan-500/20"
+              }`}>
+                {hoveredRecord.prediction.toUpperCase()} ({hoveredRecord.threatScore}%)
+              </span>
+            </div>
+
+            {/* Matrix authentication labels */}
+            <div className="grid grid-cols-3 gap-1.5 text-center">
+              <div className="bg-[#0b1222] border border-slate-900 p-1.5 rounded-lg">
+                <span className="text-slate-500 text-[8px] uppercase block">SPF</span>
+                <span className={`font-bold uppercase ${
+                  hoveredRecord.headerFindings?.spf === "PASS" ? "text-emerald-450" : hoveredRecord.headerFindings?.spf === "FAIL" ? "text-rose-450" : "text-amber-500"
+                }`}>
+                  {hoveredRecord.headerFindings?.spf || "NONE"}
+                </span>
+              </div>
+              <div className="bg-[#0b1222] border border-slate-900 p-1.5 rounded-lg">
+                <span className="text-slate-500 text-[8px] uppercase block">DKIM</span>
+                <span className={`font-bold uppercase ${
+                  hoveredRecord.headerFindings?.dkim === "PASS" ? "text-emerald-450" : hoveredRecord.headerFindings?.dkim === "FAIL" ? "text-rose-450" : "text-amber-500"
+                }`}>
+                  {hoveredRecord.headerFindings?.dkim || "NONE"}
+                </span>
+              </div>
+              <div className="bg-[#0b1222] border border-slate-900 p-1.5 rounded-lg">
+                <span className="text-slate-500 text-[8px] uppercase block">DMARC</span>
+                <span className={`font-bold uppercase ${
+                  hoveredRecord.headerFindings?.dmarc === "PASS" ? "text-emerald-450" : hoveredRecord.headerFindings?.dmarc === "FAIL" ? "text-rose-450" : "text-amber-500"
+                }`}>
+                  {hoveredRecord.headerFindings?.dmarc || "NONE"}
+                </span>
+              </div>
+            </div>
+
+            {/* Email extracts */}
+            <div className="space-y-1.5 bg-slate-950/40 p-2.5 rounded-xl border border-slate-900">
+              <div className="flex justify-between items-center text-slate-400">
+                <span>Domain Host:</span>
+                <span className="text-slate-200 select-all font-sans font-semibold">@{hoveredRecord.sender.split("@")[1] || "unknown.com"}</span>
+              </div>
+              <div className="flex justify-between items-center text-slate-400">
+                <span>Payload Links:</span>
+                <span className={hoveredRecord.urlFindings && hoveredRecord.urlFindings.length > 0 ? "text-rose-400 font-bold" : "text-slate-400"}>
+                  {hoveredRecord.urlFindings?.length || 0} URL link findings
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-slate-400">
+                <span>Attachments:</span>
+                <span className={hoveredRecord.attachmentFindings && hoveredRecord.attachmentFindings.length > 0 ? "text-rose-400 font-bold" : "text-slate-400"}>
+                  {hoveredRecord.attachmentFindings?.length || 0} secure sandbox files
+                </span>
+              </div>
+            </div>
+
+            {/* AI Summary Highlight */}
+            {hoveredRecord.aiForensicAnalysis?.threatActorHypothesis ? (
+              <div className="bg-cyan-500/5 border border-cyan-500/10 p-2.5 rounded-xl space-y-1">
+                <span className="text-cyan-400 text-[8px] uppercase font-bold tracking-wider block">Cognitive Profile</span>
+                <p className="text-slate-350 leading-relaxed text-[9px] line-clamp-3">
+                  {hoveredRecord.aiForensicAnalysis.threatActorHypothesis}
+                </p>
+              </div>
+            ) : hoveredRecord.aiForensicAnalysis?.summary ? (
+              <div className="bg-cyan-500/5 border border-cyan-500/10 p-2.5 rounded-xl space-y-1">
+                <span className="text-cyan-400 text-[8px] uppercase font-bold tracking-wider block">AI Forensics Summary</span>
+                <p className="text-slate-350 leading-relaxed text-[9px] line-clamp-3">
+                  {hoveredRecord.aiForensicAnalysis.summary}
+                </p>
+              </div>
+            ) : (
+              <div className="text-slate-500 text-center text-[8px] py-1">
+                No behavioral forensic profile computed.
+              </div>
+            )}
+
+            <div className="pt-1 text-[8px] text-slate-500 text-center uppercase tracking-wider">
+              ➔ Click to open full forensic investigation
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <EmailPreviewModal
         isOpen={isPreviewOpen}
