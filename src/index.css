@@ -14,3 +14,14 @@
     text-shadow: 0 0 10px rgba(6, 182, 212, 0.4);
   }
 }
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}

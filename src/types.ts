@@ -115,4 +115,25 @@ export interface DashboardStats {
     count: number;
   }[];
   recentInvestigations: ScanRecord[];
+  threatTrends30Days: {
+    date: string;
+    low: number;
+    medium: number;
+    high: number;
+    critical: number;
+  }[];
+}
+
+export interface LoginAttempt {
+  id: string;
+  username: string;
+  ip: string;
+  status: "SUCCESS" | "FAILED" | "BLOCKED";
+  createdAt: string;
+}
+
+export interface BannedIp {
+  ip: string;
+  reason: string;
+  createdAt: string;
 }

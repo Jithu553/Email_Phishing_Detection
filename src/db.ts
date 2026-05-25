@@ -6,7 +6,7 @@
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
-import { User, UserRole, ScanRecord, AuditLog, ThreatLevel } from "./types.js";
+import { User, UserRole, ScanRecord, AuditLog, ThreatLevel, LoginAttempt, BannedIp } from "./types.js";
 
 const DB_FILE = path.join(process.cwd(), "phish_db.json");
 
@@ -19,6 +19,8 @@ export interface DatabaseSchema {
   users: any[];
   scans: ScanRecord[];
   auditLogs: AuditLog[];
+  loginAttempts: LoginAttempt[];
+  bannedIps: BannedIp[];
 }
 
 // Pre-populate some realistic investigations for the dashboard
@@ -192,7 +194,9 @@ class Database {
     this.data = {
       users: [],
       scans: [],
-      auditLogs: []
+      auditLogs: [],
+      loginAttempts: [],
+      bannedIps: []
     };
     this.load();
   }
@@ -202,6 +206,14 @@ class Database {
       if (fs.existsSync(DB_FILE)) {
         const fileContent = fs.readFileSync(DB_FILE, "utf-8");
         this.data = JSON.parse(fileContent);
+        
+        // Ensure properties exist if upgrading from a simpler schema
+        if (!this.data.loginAttempts) {
+          this.data.loginAttempts = [];
+        }
+        if (!this.data.bannedIps) {
+          this.data.bannedIps = [];
+        }
       } else {
         // Initialize default credentials and scans
         const adminPassHash = hashPassword("admin123");
@@ -234,7 +246,37 @@ class Database {
               action: "Database Bootstrapped",
               details: "Security databases initialized with default SOC profiles and training sets",
               ip: "127.0.0.1",
-              createdAt: new Date().toISOString()
+              createdAt: new Date(Date.now() - 3600000 * 48).toISOString()
+            }
+          ],
+          loginAttempts: [
+            {
+              id: "attempt_1",
+              username: "admin",
+              ip: "192.168.1.15",
+              status: "SUCCESS",
+              createdAt: new Date(Date.now() - 3600000 * 24).toISOString()
+            },
+            {
+              id: "attempt_2",
+              username: "guest_attacker",
+              ip: "198.51.100.42",
+              status: "FAILED",
+              createdAt: new Date(Date.now() - 3600000 * 8).toISOString()
+            },
+            {
+              id: "attempt_3",
+              username: "analyst",
+              ip: "192.168.1.22",
+              status: "SUCCESS",
+              createdAt: new Date(Date.now() - 3600000 * 2).toISOString()
+            }
+          ],
+          bannedIps: [
+            {
+              ip: "198.51.100.42",
+              reason: "Repetitive unauthorized dictionary attack detected on SOC gateways",
+              createdAt: new Date(Date.now() - 3600000 * 7).toISOString()
             }
           ]
         };
@@ -331,6 +373,64 @@ class Database {
   public deleteLogs() {
     this.data.auditLogs = [];
     this.save();
+  }
+
+  // Login attempts methods
+  public getLoginAttempts() {
+    return this.data.loginAttempts || [];
+  }
+
+  public addLoginAttempt(username: string, ip: string, status: "SUCCESS" | "FAILED" | "BLOCKED") {
+    if (!this.data.loginAttempts) {
+      this.data.loginAttempts = [];
+    }
+    const attempt: LoginAttempt = {
+      id: "attempt_" + Math.random().toString(36).substr(2, 9),
+      username,
+      ip,
+      status,
+      createdAt: new Date().toISOString()
+    };
+    this.data.loginAttempts.unshift(attempt); // latest attempt first
+    this.save();
+    return attempt;
+  }
+
+  // Banned IPs methods
+  public getBannedIps() {
+    return this.data.bannedIps || [];
+  }
+
+  public banIp(ip: string, reason: string) {
+    if (!this.data.bannedIps) {
+      this.data.bannedIps = [];
+    }
+    // Prevent duplicates
+    if (this.data.bannedIps.some(b => b.ip === ip)) {
+      return;
+    }
+    const banned: BannedIp = {
+      ip,
+      reason: reason || "Administratively blacklisted from accessing the gate systems",
+      createdAt: new Date().toISOString()
+    };
+    this.data.bannedIps.unshift(banned);
+    this.save();
+    return banned;
+  }
+
+  public unbanIp(ip: string) {
+    if (!this.data.bannedIps) {
+      this.data.bannedIps = [];
+      return;
+    }
+    this.data.bannedIps = this.data.bannedIps.filter(b => b.ip !== ip);
+    this.save();
+  }
+
+  public isIpBanned(ip: string): boolean {
+    if (!this.data.bannedIps) return false;
+    return this.data.bannedIps.some(b => b.ip === ip);
   }
 }
 
