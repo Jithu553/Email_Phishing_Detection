@@ -1,0 +1,8 @@
+{
+  "name": "AI Email Phishing Detection & Investigation Platform",
+  "description": "An intelligent digital forensics and machine learning platform that detects email phishing attacks, analyzes headers, checks URLs, scans attachments, and generates secure forensic reports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
